@@ -3,7 +3,7 @@ use std::borrow::BorrowMut;
 use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockQuerier};
 use cosmwasm_std::{coin, Addr, Env, MemoryStorage, MessageInfo, OwnedDeps, StdError, Timestamp};
 
-use crate::execute::{create_deal, update_config};
+use crate::execute::{cancel_deal, create_deal, update_config};
 use crate::instantiate::instantiate;
 use crate::msg::{CreateDealMsg, InstantiateMsg, QueryFilter, QueryOptions};
 use crate::query::{
@@ -292,4 +292,40 @@ pub fn test_create_deal() {
     assert_eq!(deal.seller, info.sender);
     assert_eq!(deal.ask, msg.ask);
     assert_eq!(deal.offer, msg.offer);
+}
+
+#[test]
+pub fn test_cancel_deal() {
+    let mut deps = mock_dependencies();
+    let env = mock_env();
+    let offer = coin(100, "ustake");
+    let info: MessageInfo = mock_info(SELLER, &[offer.clone()]);
+
+    deals()
+        .save(
+            deps.as_mut().storage,
+            1,
+            &Deal {
+                id: 1,
+                seller: info.sender.clone(),
+                creation_time: env.block.time,
+                end_time: Timestamp::from_seconds(env.block.time.seconds()).plus_hours(1),
+                buyer: None,
+                ask: coin(12, "ucosm"),
+                offer,
+                status: DealStatus::Open,
+            },
+        )
+        .unwrap();
+
+    let deal = deals().load(deps.as_ref().storage, 1).unwrap();
+    assert_eq!(deal.id, 1);
+    assert_eq!(deal.status, DealStatus::Open);
+
+    let res = cancel_deal(deps.as_mut(), env.clone(), info.clone(), 1);
+    assert!(res.is_ok());
+    assert_eq!(res.unwrap().messages.len(), 1);
+
+    let deal = deals().load(deps.as_ref().storage, 1).unwrap();
+    assert_eq!(deal.status, DealStatus::Cancelled);
 }
