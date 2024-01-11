@@ -6,7 +6,7 @@ use cw_denom::DenomError;
 use cw_utils::PaymentError;
 
 use crate::error::ContractError;
-use crate::execute::{cancel_deal, create_deal, execute_deal, update_config};
+use crate::execute::{cancel_deal, claim, create_deal, execute_deal, update_config};
 use crate::instantiate::instantiate;
 use crate::msg::{CreateDealMsg, InstantiateMsg, QueryFilter, QueryOptions};
 use crate::query::{
@@ -493,4 +493,68 @@ pub fn test_execute_deal() {
     let res = execute_deal(deps.as_mut(), env.clone(), buyer_info.clone(), 3);
     assert!(res.is_err());
     assert_eq!(res.unwrap_err(), ContractError::DealExpired);
+}
+
+#[test]
+pub fn test_claim() {
+    let mut deps = mock_dependencies();
+    let env = mock_env();
+    let offer = coin(100, "ustake");
+    let ask = coin(12, "ucosm");
+    let seller_info: MessageInfo = mock_info(SELLER, &[offer.clone()]);
+    let buyer_info: MessageInfo = mock_info(BUYER, &[ask.clone()]);
+
+    deals()
+        .save(
+            deps.as_mut().storage,
+            1,
+            &Deal {
+                id: 1,
+                seller: seller_info.sender.clone(),
+                creation_time: env.block.time,
+                end_time: Timestamp::from_seconds(env.block.time.seconds()).plus_hours(1),
+                buyer: Some(buyer_info.sender.clone()),
+                ask: ask.clone(),
+                offer: offer.clone(),
+                status: DealStatus::Open,
+            },
+        )
+        .unwrap();
+
+    let deal = deals().load(deps.as_ref().storage, 1).unwrap();
+    assert_eq!(deal.id, 1);
+    assert_eq!(deal.status, DealStatus::Open);
+
+    // It shouldn't be possible to claim a open deal
+    let res = claim(deps.as_mut(), seller_info.clone(), 1);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::Unauthorized);
+
+    let deal = deals()
+        .update(
+            deps.as_mut().storage,
+            1,
+            |d| -> Result<Deal, ContractError> {
+                let mut deal = d.unwrap();
+                deal.status = DealStatus::Claimable;
+                Ok(deal)
+            },
+        )
+        .unwrap();
+
+    assert_eq!(deal.status, DealStatus::Claimable);
+
+    // It shouldn't be possible to claim a deal without being the seller
+    let res = claim(deps.as_mut(), buyer_info.clone(), 1);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::Unauthorized);
+
+    // It should be possible to claim the deal
+    let res = claim(deps.as_mut(), seller_info.clone(), 1);
+    assert!(res.is_ok());
+    assert_eq!(res.unwrap().messages.len(), 1);
+
+    let deal = deals().load(deps.as_ref().storage, 1).unwrap();
+    assert_eq!(deal.status, DealStatus::Closed);
+    assert_eq!(deal.buyer, Some(buyer_info.sender.clone()));
 }
