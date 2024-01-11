@@ -1,0 +1,4 @@
+[alias]
+test = "test --lib -- --nocapture"
+wasm = "build --lib --release --target wasm32-unknown-unknown"
+schema = "run --bin schema"
