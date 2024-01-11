@@ -1,14 +1,44 @@
 use std::borrow::BorrowMut;
 
-use cosmwasm_std::testing::{mock_dependencies, mock_env, MockApi, MockQuerier};
-use cosmwasm_std::{coin, Addr, Env, MemoryStorage, OwnedDeps, StdError, Timestamp};
+use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockQuerier};
+use cosmwasm_std::{coin, Addr, Env, MemoryStorage, MessageInfo, OwnedDeps, StdError, Timestamp};
 
-use crate::msg::{QueryFilter, QueryOptions};
-use crate::query::{query_deal_by_id, query_deals_by_expiration, query_deals_by_filters};
-use crate::state::{deals, Deal, DealStatus};
+use crate::execute::update_config;
+use crate::instantiate::instantiate;
+use crate::msg::{InstantiateMsg, QueryFilter, QueryOptions};
+use crate::query::{
+    query_config, query_deal_by_id, query_deals_by_expiration, query_deals_by_filters,
+};
+use crate::state::{deals, Deal, DealStatus, CONFIG};
 
 const SELLER: &str = "seller";
 const BUYER: &str = "buyer";
+
+fn do_instantiate() -> (
+    OwnedDeps<MemoryStorage, MockApi, MockQuerier>,
+    Env,
+    MessageInfo,
+) {
+    let mut deps = mock_dependencies();
+    let env = mock_env();
+    let info: MessageInfo = mock_info("owner", &[]);
+
+    let msg = InstantiateMsg {
+        owner: "owner".to_string(),
+        duration_range: vec![500, 300],
+    };
+
+    let res = instantiate(deps.as_mut(), env.clone(), info.clone(), msg.clone());
+    assert!(res.is_ok());
+
+    let cfg = CONFIG.load(&deps.storage).unwrap();
+
+    // Verify config is right
+    assert_eq!(cfg.owner, msg.owner);
+    assert_eq!(cfg.duration_range, msg.duration_range);
+
+    (deps, env, info)
+}
 
 fn mock_data(env: &Env, deps: &mut OwnedDeps<MemoryStorage, MockApi, MockQuerier>) {
     let seller = Addr::unchecked(SELLER);
@@ -178,4 +208,50 @@ pub fn try_query_deals_by_expiration() {
 
     let res = query_deals_by_expiration(deps.as_ref(), env.clone(), true, Some(query_options));
     assert_eq!(res.unwrap().len(), 2);
+}
+
+#[test]
+pub fn test_query_config() {
+    let (deps, _, _) = do_instantiate();
+
+    let res = query_config(deps.as_ref());
+    assert!(res.is_ok());
+
+    let cfg = res.unwrap();
+    assert_eq!(cfg.owner, "owner".to_string());
+    assert_eq!(cfg.duration_range, vec![500, 300]);
+}
+
+#[test]
+pub fn test_update_config() {
+    let (mut deps, _env, info) = do_instantiate();
+
+    let res = update_config(deps.as_mut(), info.clone(), None, Some(vec![100, 200]));
+    assert!(res.is_ok());
+
+    // Config should have changed
+    let cfg = CONFIG.load(&deps.storage).unwrap();
+    assert_eq!(cfg.duration_range, vec![100, 200]);
+    assert_eq!(cfg.owner, "owner".to_string());
+
+    let res = update_config(
+        deps.as_mut(),
+        info.clone(),
+        Some("new_owner".to_string()),
+        None,
+    );
+    assert!(res.is_ok());
+
+    // owner should have changed
+    let cfg = CONFIG.load(&deps.storage).unwrap();
+    assert_eq!(cfg.owner, "new_owner".to_string());
+
+    // should fail since the sender is not the owner
+    let res = update_config(
+        deps.as_mut(),
+        info.clone(),
+        Some("try_new_owner".to_string()),
+        None,
+    );
+    assert!(res.is_err())
 }
