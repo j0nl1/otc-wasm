@@ -3,13 +3,13 @@ use std::borrow::BorrowMut;
 use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockQuerier};
 use cosmwasm_std::{coin, Addr, Env, MemoryStorage, MessageInfo, OwnedDeps, StdError, Timestamp};
 
-use crate::execute::update_config;
+use crate::execute::{create_deal, update_config};
 use crate::instantiate::instantiate;
-use crate::msg::{InstantiateMsg, QueryFilter, QueryOptions};
+use crate::msg::{CreateDealMsg, InstantiateMsg, QueryFilter, QueryOptions};
 use crate::query::{
     query_config, query_deal_by_id, query_deals_by_expiration, query_deals_by_filters,
 };
-use crate::state::{deals, Deal, DealStatus, CONFIG};
+use crate::state::{deals, Config, Deal, DealStatus, CONFIG};
 
 const SELLER: &str = "seller";
 const BUYER: &str = "buyer";
@@ -102,7 +102,7 @@ fn mock_data(env: &Env, deps: &mut OwnedDeps<MemoryStorage, MockApi, MockQuerier
 }
 
 #[test]
-fn try_query_deal_by_id() {
+fn test_query_deal_by_id() {
     let mut deps = mock_dependencies();
     let env = mock_env();
     mock_data(&env, deps.borrow_mut());
@@ -112,7 +112,7 @@ fn try_query_deal_by_id() {
 }
 
 #[test]
-fn try_query_deals_by_filters() {
+fn test_query_deals_by_filters() {
     let mut deps = mock_dependencies();
     let env = mock_env();
     mock_data(&env, deps.borrow_mut());
@@ -186,7 +186,7 @@ fn try_query_deals_by_filters() {
 }
 
 #[test]
-pub fn try_query_deals_by_expiration() {
+pub fn test_query_deals_by_expiration() {
     let mut deps = mock_dependencies();
     let env = mock_env();
     mock_data(&env, deps.borrow_mut());
@@ -250,8 +250,46 @@ pub fn test_update_config() {
     let res = update_config(
         deps.as_mut(),
         info.clone(),
-        Some("try_new_owner".to_string()),
+        Some("test_new_owner".to_string()),
         None,
     );
     assert!(res.is_err())
+}
+
+#[test]
+pub fn test_create_deal() {
+    let mut deps = mock_dependencies();
+    let env = mock_env();
+    let offer = coin(100, "ustake");
+    let info: MessageInfo = mock_info(SELLER, &[offer.clone()]);
+
+    CONFIG
+        .save(
+            deps.as_mut().storage,
+            &Config {
+                owner: Addr::unchecked("owner"),
+                duration_range: vec![500, 300],
+            },
+        )
+        .unwrap();
+
+    let msg = CreateDealMsg {
+        offer,
+        ask: coin(12, "ucosm"),
+        duration: 500,
+    };
+
+    let res = create_deal(deps.as_mut(), env.clone(), info.clone(), msg.clone());
+    assert!(res.is_ok());
+
+    let deal = deals().load(deps.as_ref().storage, 1).unwrap();
+
+    // Verify deal is right
+    assert_eq!(deal.creation_time, env.block.time);
+    assert_eq!(deal.end_time, env.block.time.plus_seconds(msg.duration));
+    assert_eq!(deal.status, DealStatus::Open);
+    assert_eq!(deal.buyer, None);
+    assert_eq!(deal.seller, info.sender);
+    assert_eq!(deal.ask, msg.ask);
+    assert_eq!(deal.offer, msg.offer);
 }

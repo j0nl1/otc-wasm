@@ -17,7 +17,7 @@ pub type Id = u64;
 pub const ID_COUNT: Item<Id> = Item::new("id_count");
 
 pub fn next_id(store: &mut dyn Storage) -> StdResult<Id> {
-    let id = ID_COUNT.may_load(store)?.unwrap_or_default();
+    let id = ID_COUNT.may_load(store)?.unwrap_or(1);
     ID_COUNT.save(store, &(id + 1))?;
     Ok(id)
 }
