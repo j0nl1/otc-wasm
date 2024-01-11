@@ -6,7 +6,7 @@ use cw_storage_plus::Bound;
 
 use crate::{
     msg::{QueryFilter, QueryMsg, QueryOptions},
-    state::{deals, Deal},
+    state::{deals, Config, Deal, CONFIG},
 };
 
 const DEFAULT_QUERY_LIMIT: u32 = 10;
@@ -28,6 +28,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::DealsByFilters { options, filters } => {
             to_json_binary(&query_deals_by_filters(deps, filters, options)?)
         }
+        QueryMsg::Config {} => to_json_binary(&query_config(deps)?),
     }
 }
 
@@ -139,4 +140,8 @@ pub fn query_deals_by_expiration(
         .collect::<StdResult<_>>()?;
 
     Ok(result)
+}
+
+pub fn query_config(deps: Deps) -> StdResult<Config> {
+    Ok(CONFIG.load(deps.storage)?)
 }

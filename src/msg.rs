@@ -1,7 +1,7 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::Coin;
 
-use crate::state::{Deal, DealStatus, Id};
+use crate::state::{Config, Deal, DealStatus, Id};
 
 #[cw_serde]
 pub struct InstantiateMsg {
@@ -40,6 +40,8 @@ pub enum QueryMsg {
         filters: QueryFilter,
         options: Option<QueryOptions>,
     },
+    #[returns(Config)]
+    Config,
 }
 
 /// QueryOptions are used to paginate contract queries
