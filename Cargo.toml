@@ -32,3 +32,8 @@ thiserror = "1.0.56"
 cw2 = "1.1.2"
 cw-storage-macro = "1.2.0"
 cw-denom = "2.3.0"
+
+[dev-dependencies]
+anyhow = "1.0.79"
+cw-multi-test = "0.20.0"
+derivative = "2.2.0"
