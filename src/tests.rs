@@ -3,10 +3,10 @@ use std::borrow::BorrowMut;
 use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockQuerier};
 use cosmwasm_std::{coin, Addr, Env, MemoryStorage, MessageInfo, OwnedDeps, StdError, Timestamp};
 use cw_denom::DenomError;
-use cw_utils::PaymentError;
+use cw_utils::{Expiration, PaymentError};
 
 use crate::error::ContractError;
-use crate::execute::{cancel_deal, claim, create_deal, execute_deal, update_config};
+use crate::execute::{cancel_deal, claim, create_deal, execute_deal, update_config, withdraw};
 use crate::instantiate::instantiate;
 use crate::msg::{CreateDealMsg, InstantiateMsg, QueryFilter, QueryOptions};
 use crate::query::{
@@ -557,4 +557,83 @@ pub fn test_claim() {
     let deal = deals().load(deps.as_ref().storage, 1).unwrap();
     assert_eq!(deal.status, DealStatus::Closed);
     assert_eq!(deal.buyer, Some(buyer_info.sender.clone()));
+}
+
+#[test]
+pub fn test_withdraw() {
+    let mut deps = mock_dependencies();
+    let env = mock_env();
+    let offer = coin(100, "ustake");
+    let ask = coin(12, "ucosm");
+    let seller_info: MessageInfo = mock_info(SELLER, &[offer.clone()]);
+    let buyer_info: MessageInfo = mock_info(BUYER, &[ask.clone()]);
+
+    deals()
+        .save(
+            deps.as_mut().storage,
+            1,
+            &Deal {
+                id: 1,
+                seller: seller_info.sender.clone(),
+                creation_time: env.block.time,
+                end_time: Timestamp::from_seconds(env.block.time.seconds()).plus_hours(1),
+                buyer: Some(buyer_info.sender.clone()),
+                ask: ask.clone(),
+                offer: offer.clone(),
+                status: DealStatus::Closed,
+            },
+        )
+        .unwrap();
+
+    let deal = deals().load(deps.as_ref().storage, 1).unwrap();
+    assert_eq!(deal.id, 1);
+    assert_eq!(deal.status, DealStatus::Closed);
+
+    // It shouldn't be possible to withdraw a deal that is not open
+    let res = withdraw(deps.as_mut(), env.clone(), seller_info.clone(), 1);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::Unauthorized);
+
+    let deal = deals()
+        .update(
+            deps.as_mut().storage,
+            1,
+            |d| -> Result<Deal, ContractError> {
+                let mut deal = d.unwrap();
+                deal.status = DealStatus::Open;
+                Ok(deal)
+            },
+        )
+        .unwrap();
+
+    assert_eq!(deal.status, DealStatus::Open);
+
+    // It shouldn't be possible to withdraw a deal without being the seller
+    let res = withdraw(deps.as_mut(), env.clone(), seller_info.clone(), 1);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::Unauthorized);
+
+    // it shouldn't be possible to withdraw if the deal is not expired
+    let res = withdraw(deps.as_mut(), env.clone(), seller_info.clone(), 1);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::Unauthorized);
+
+    let deal = deals()
+        .update(
+            deps.as_mut().storage,
+            1,
+            |d| -> Result<Deal, ContractError> {
+                let mut deal = d.unwrap();
+                deal.end_time = Timestamp::from_seconds(env.block.time.seconds()).minus_hours(1);
+                Ok(deal)
+            },
+        )
+        .unwrap();
+
+    assert!(Expiration::AtTime(deal.end_time).is_expired(&env.block));
+
+    // It should be possible to withdraw the deal
+    let res = withdraw(deps.as_mut(), env, seller_info.clone(), 1);
+    assert!(res.is_ok());
+    assert_eq!(res.unwrap().messages.len(), 1);
 }
