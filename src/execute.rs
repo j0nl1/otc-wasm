@@ -63,12 +63,6 @@ pub fn withdraw(
         .add_attribute("seller", info.sender)
         .add_attribute("id", id.to_string());
 
-    deals().update(deps.storage, id, |d| -> Result<Deal, ContractError> {
-        let mut deal = d.unwrap();
-        deal.status = DealStatus::Closed;
-        Ok(deal)
-    })?;
-
     Ok(Response::new().add_event(event).add_message(msg))
 }
 
@@ -110,12 +104,6 @@ pub fn execute_deal(
     let event = Event::new("OtcWasm.v1.MsgExecuteDeal")
         .add_attribute("buyer", info.sender)
         .add_attribute("id", id.to_string());
-
-    deals().update(deps.storage, id, |d| -> Result<Deal, ContractError> {
-        let mut deal = d.unwrap();
-        deal.status = DealStatus::Claimable;
-        Ok(deal)
-    })?;
 
     Ok(Response::new().add_event(event).add_message(msg))
 }
@@ -175,15 +163,15 @@ pub fn claim(deps: DepsMut, info: MessageInfo, id: Id) -> Result<Response, Contr
         amount: vec![deal.ask],
     };
 
-    let event = Event::new("OtcWasm.v1.MsgClaim")
-        .add_attribute("claimer", info.sender)
-        .add_attribute("id", id.to_string());
-
     deals().update(deps.storage, id, |d| -> Result<Deal, ContractError> {
         let mut deal = d.unwrap();
         deal.status = DealStatus::Closed;
         Ok(deal)
     })?;
+
+    let event = Event::new("OtcWasm.v1.MsgClaim")
+        .add_attribute("claimer", info.sender)
+        .add_attribute("id", id.to_string());
 
     Ok(Response::new().add_event(event).add_message(msg))
 }
