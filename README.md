@@ -1,4 +1,4 @@
-# COT-WASM 👋
+# OTC-WASM 👋
 
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=flat-square)](http://makeapullrequest.com)
 
@@ -11,6 +11,10 @@ Run `cargo test` to execute the unit tests.
 Run `cargo clippy -- -D warnings` to check warning from your code
 
 Run `cargo fmt --all` to format the code
+
+## Build
+
+Run `cargo wasm` for building the contract
 
 ## License
 
