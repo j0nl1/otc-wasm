@@ -86,7 +86,7 @@ pub fn execute_deal(
     ensure_eq!(
         payment,
         deal.ask.amount,
-        ContractError::InsufficientAmount(payment.to_string())
+        ContractError::InsufficientAmount(deal.ask.amount.to_string())
     );
 
     deals().update(deps.storage, id, |d| -> Result<Deal, ContractError> {

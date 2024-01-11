@@ -2,8 +2,11 @@ use std::borrow::BorrowMut;
 
 use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info, MockApi, MockQuerier};
 use cosmwasm_std::{coin, Addr, Env, MemoryStorage, MessageInfo, OwnedDeps, StdError, Timestamp};
+use cw_denom::DenomError;
+use cw_utils::PaymentError;
 
-use crate::execute::{cancel_deal, create_deal, update_config};
+use crate::error::ContractError;
+use crate::execute::{cancel_deal, create_deal, execute_deal, update_config};
 use crate::instantiate::instantiate;
 use crate::msg::{CreateDealMsg, InstantiateMsg, QueryFilter, QueryOptions};
 use crate::query::{
@@ -274,7 +277,7 @@ pub fn test_create_deal() {
         .unwrap();
 
     let msg = CreateDealMsg {
-        offer,
+        offer: offer.clone(),
         ask: coin(12, "ucosm"),
         duration: 500,
     };
@@ -292,6 +295,31 @@ pub fn test_create_deal() {
     assert_eq!(deal.seller, info.sender);
     assert_eq!(deal.ask, msg.ask);
     assert_eq!(deal.offer, msg.offer);
+
+    let msg: CreateDealMsg = CreateDealMsg {
+        offer: offer.clone(),
+        ask: coin(12, "ba"),
+        duration: 500,
+    };
+
+    // Should fail if the denom is invalid or not native
+    let res = create_deal(deps.as_mut(), env.clone(), info.clone(), msg.clone());
+    assert!(res.is_err());
+    assert_eq!(
+        res.unwrap_err(),
+        ContractError::Denom(DenomError::NativeDenomLength { len: 2 })
+    );
+
+    // Should fail if the duration is not in the range
+    let msg: CreateDealMsg = CreateDealMsg {
+        offer: offer.clone(),
+        ask: coin(12, "ucosm"),
+        duration: 100,
+    };
+
+    let res = create_deal(deps.as_mut(), env.clone(), info.clone(), msg.clone());
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::InvalidDuration(500, 300));
 }
 
 #[test]
@@ -312,7 +340,7 @@ pub fn test_cancel_deal() {
                 end_time: Timestamp::from_seconds(env.block.time.seconds()).plus_hours(1),
                 buyer: None,
                 ask: coin(12, "ucosm"),
-                offer,
+                offer: offer.clone(),
                 status: DealStatus::Open,
             },
         )
@@ -328,4 +356,141 @@ pub fn test_cancel_deal() {
 
     let deal = deals().load(deps.as_ref().storage, 1).unwrap();
     assert_eq!(deal.status, DealStatus::Cancelled);
+
+    deals()
+        .save(
+            deps.as_mut().storage,
+            2,
+            &Deal {
+                id: 2,
+                seller: info.sender.clone(),
+                creation_time: env.block.time,
+                end_time: Timestamp::from_seconds(env.block.time.seconds()).minus_hours(1),
+                buyer: None,
+                ask: coin(12, "ucosm"),
+                offer,
+                status: DealStatus::Open,
+            },
+        )
+        .unwrap();
+
+    // It shouldn't be possible to cancel a deal that has expired
+    let deal = deals().load(deps.as_ref().storage, 2).unwrap();
+    assert_eq!(deal.id, 2);
+    assert_eq!(deal.status, DealStatus::Open);
+
+    let res = cancel_deal(deps.as_mut(), env.clone(), info.clone(), 2);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::DealExpired);
+}
+
+#[test]
+pub fn test_execute_deal() {
+    let mut deps = mock_dependencies();
+    let env = mock_env();
+    let offer = coin(100, "ustake");
+    let ask = coin(12, "ucosm");
+    let seller_info: MessageInfo = mock_info(SELLER, &[offer.clone()]);
+    let buyer_info: MessageInfo = mock_info(BUYER, &[ask.clone()]);
+
+    deals()
+        .save(
+            deps.as_mut().storage,
+            1,
+            &Deal {
+                id: 1,
+                seller: seller_info.sender.clone(),
+                creation_time: env.block.time,
+                end_time: Timestamp::from_seconds(env.block.time.seconds()).plus_hours(1),
+                buyer: None,
+                ask: ask.clone(),
+                offer: offer.clone(),
+                status: DealStatus::Open,
+            },
+        )
+        .unwrap();
+
+    let deal = deals().load(deps.as_ref().storage, 1).unwrap();
+    assert_eq!(deal.id, 1);
+    assert_eq!(deal.status, DealStatus::Open);
+    // it shouldn't be possible to execute a deal without sending the right ask
+    let res = execute_deal(deps.as_mut(), env.clone(), mock_info(BUYER, &[]), 1);
+    assert!(res.is_err());
+    assert_eq!(
+        res.unwrap_err(),
+        ContractError::Payment(PaymentError::NoFunds {})
+    );
+
+    let res = execute_deal(
+        deps.as_mut(),
+        env.clone(),
+        mock_info(BUYER, &[coin(1, "ucosm")]),
+        1,
+    );
+    assert!(res.is_err());
+    assert_eq!(
+        res.unwrap_err(),
+        ContractError::InsufficientAmount(deal.ask.amount.clone().to_string())
+    );
+
+    // It should be possible to execute the deal
+    let res = execute_deal(deps.as_mut(), env.clone(), buyer_info.clone(), 1);
+    assert!(res.is_ok());
+    assert_eq!(res.unwrap().messages.len(), 1);
+
+    let deal = deals().load(deps.as_ref().storage, 1).unwrap();
+    assert_eq!(deal.status, DealStatus::Claimable);
+    assert_eq!(deal.buyer, Some(buyer_info.sender.clone()));
+
+    deals()
+        .save(
+            deps.as_mut().storage,
+            2,
+            &Deal {
+                id: 2,
+                seller: seller_info.sender.clone(),
+                creation_time: env.block.time,
+                end_time: Timestamp::from_seconds(env.block.time.seconds()).plus_hours(1),
+                buyer: None,
+                ask: ask.clone(),
+                offer: offer.clone(),
+                status: DealStatus::Expired,
+            },
+        )
+        .unwrap();
+
+    let deal = deals().load(deps.as_ref().storage, 2).unwrap();
+    assert_eq!(deal.id, 2);
+    assert_eq!(deal.status, DealStatus::Expired);
+
+    // It shouldn't be possible to execute a deal that hasn't open
+    let res = execute_deal(deps.as_mut(), env.clone(), buyer_info.clone(), 2);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::Unauthorized);
+
+    deals()
+        .save(
+            deps.as_mut().storage,
+            3,
+            &Deal {
+                id: 3,
+                seller: seller_info.sender.clone(),
+                creation_time: env.block.time,
+                end_time: Timestamp::from_seconds(env.block.time.seconds()).minus_hours(1),
+                buyer: None,
+                ask: ask.clone(),
+                offer,
+                status: DealStatus::Open,
+            },
+        )
+        .unwrap();
+
+    let deal = deals().load(deps.as_ref().storage, 3).unwrap();
+    assert_eq!(deal.id, 3);
+    assert_eq!(deal.status, DealStatus::Open);
+
+    // It shouldn't be possible to execute a deal that has expired
+    let res = execute_deal(deps.as_mut(), env.clone(), buyer_info.clone(), 3);
+    assert!(res.is_err());
+    assert_eq!(res.unwrap_err(), ContractError::DealExpired);
 }
